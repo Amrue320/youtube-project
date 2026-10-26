@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/router";
-import axiosInstance from "@/lib/axiosInstance";
+import axiosInstance from "@/lib/axiosinstance";
 import { useUser } from "@/lib/AuthContext";
 
 interface Channel {
@@ -312,17 +312,16 @@ const ChannelPage = () => {
                 <button
                   onClick={() => void handleSubscribe()}
                   disabled={subscribing}
-                  className={`rounded-full px-6 py-3 font-semibold transition disabled:opacity-50 ${
-                    subscribed
+                  className={`rounded-full px-6 py-3 font-semibold transition disabled:opacity-50 ${subscribed
                       ? "bg-gray-200 text-gray-900 hover:bg-gray-300 dark:bg-gray-700 dark:text-white dark:hover:bg-gray-600"
                       : "bg-red-600 text-white hover:bg-red-700"
-                  }`}
+                    }`}
                 >
                   {subscribing
                     ? "Updating..."
                     : subscribed
-                    ? "Subscribed"
-                    : "Subscribe"}
+                      ? "Subscribed"
+                      : "Subscribe"}
                 </button>
               )}
             </div>

@@ -162,7 +162,9 @@ const Index = () => {
 
             <VideoInfo video={selectedVideo} />
 
-            <Comments videoId={id} />
+            {id && (
+              <Comments videoId={Array.isArray(id) ? id[0] : id} />
+            )}
           </div>
 
           {/* Related Videos */}
