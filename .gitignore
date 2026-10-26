@@ -1,0 +1,32 @@
+
+# Dependencies
+node_modules/
+
+# Next.js
+.next/
+out/
+build/
+
+# Environment files and secrets
+.env
+.env.*
+!.env.example
+!.env.local.example
+server/firebase-service-account.json
+
+# Uploaded videos
+server/uploads/
+
+# Vercel
+.vercel/
+
+# Logs and build files
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+*.tsbuildinfo
+next-env.d.ts
+
+# Miscellaneous
+.DS_Store
+*.pem
