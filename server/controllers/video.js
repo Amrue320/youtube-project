@@ -1,8 +1,37 @@
+
 import like from "../Modals/like.js";
 import mongoose from "mongoose";
 import video from "../Modals/video.js";
 import users from "../Modals/Auth.js";
+import path from "path";
 
+const BACKEND_URL = (
+  process.env.BACKEND_URL ||
+  process.env.RENDER_EXTERNAL_URL ||
+  ""
+).replace(/\/+$/, "");
+
+function createVideoUrl(filepath) {
+  if (!filepath) return null;
+
+  const normalizedPath = String(filepath).replace(/\\/g, "/");
+  const filename = path.posix.basename(normalizedPath);
+
+  if (!filename || filename === "." || filename === "..") {
+    return null;
+  }
+
+  const encodedFilename = encodeURIComponent(filename);
+  const relativeUrl = `/uploads/${encodedFilename}`;
+
+  return BACKEND_URL
+    ? `${BACKEND_URL}${relativeUrl}`
+    : relativeUrl;
+}
+
+// ==========================================
+// UPLOAD VIDEO
+// ==========================================
 export const uploadvideo = async (req, res) => {
   if (!req.file) {
     return res.status(400).json({
@@ -28,7 +57,10 @@ export const uploadvideo = async (req, res) => {
     return res.status(201).json({
       success: true,
       message: "File uploaded successfully.",
-      video: file,
+      video: {
+        ...file.toObject(),
+        videoUrl: createVideoUrl(file.filepath),
+      },
     });
   } catch (error) {
     console.error("Upload Error:", error);
@@ -40,6 +72,9 @@ export const uploadvideo = async (req, res) => {
   }
 };
 
+// ==========================================
+// GET ALL VIDEOS
+// ==========================================
 export const getallvideo = async (req, res) => {
   try {
     const files = await video.find().sort({ createdAt: -1 });
@@ -47,29 +82,26 @@ export const getallvideo = async (req, res) => {
     const updatedFiles = await Promise.all(
       files.map(async (file) => {
         if (
-          file.uploader &&
-          mongoose.Types.ObjectId.isValid(file.uploader)
+          !file.uploader ||
+          !mongoose.Types.ObjectId.isValid(file.uploader)
         ) {
-          return file;
+          const channelUser = await users.findOne({
+            $or: [
+              { channelname: file.videochanel },
+              { name: file.videochanel },
+            ],
+          });
+
+          if (channelUser) {
+            file.uploader = channelUser._id.toString();
+            await file.save();
+          }
         }
 
-        const channelUser = await users.findOne({
-          $or: [
-            {
-              channelname: file.videochanel,
-            },
-            {
-              name: file.videochanel,
-            },
-          ],
-        });
-
-        if (channelUser) {
-          file.uploader = channelUser._id.toString();
-          await file.save();
-        }
-
-        return file;
+        return {
+          ...file.toObject(),
+          videoUrl: createVideoUrl(file.filepath),
+        };
       })
     );
 
@@ -128,7 +160,12 @@ export const searchVideos = async (req, res) => {
       })
       .sort({ createdAt: -1 });
 
-    return res.status(200).json(videos);
+    const updatedVideos = videos.map((item) => ({
+      ...item.toObject(),
+      videoUrl: createVideoUrl(item.filepath),
+    }));
+
+    return res.status(200).json(updatedVideos);
   } catch (error) {
     console.error("Search Error:", error);
 
@@ -146,6 +183,13 @@ export const incrementViews = async (req, res) => {
   try {
     const { id } = req.params;
 
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid video ID.",
+      });
+    }
+
     const updatedVideo = await video.findByIdAndUpdate(
       id,
       { $inc: { views: 1 } },
@@ -155,13 +199,13 @@ export const incrementViews = async (req, res) => {
     if (!updatedVideo) {
       return res.status(404).json({
         success: false,
-        message: "Video not found",
+        message: "Video not found.",
       });
     }
 
     return res.status(200).json({
       success: true,
-      message: "View count updated",
+      message: "View count updated.",
       views: updatedVideo.views,
     });
   } catch (error) {
@@ -169,7 +213,7 @@ export const incrementViews = async (req, res) => {
 
     return res.status(500).json({
       success: false,
-      message: "Unable to update views",
+      message: "Unable to update views.",
     });
   }
 };
@@ -185,21 +229,17 @@ export const handleLike = async (req, res) => {
     if (!userId) {
       return res.status(400).json({
         success: false,
-        message: "User ID is required",
+        message: "User ID is required.",
       });
     }
 
-    if (!mongoose.Types.ObjectId.isValid(id)) {
+    if (
+      !mongoose.Types.ObjectId.isValid(id) ||
+      !mongoose.Types.ObjectId.isValid(userId)
+    ) {
       return res.status(400).json({
         success: false,
-        message: "Invalid video ID",
-      });
-    }
-
-    if (!mongoose.Types.ObjectId.isValid(userId)) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid user ID",
+        message: "Invalid video ID or user ID.",
       });
     }
 
@@ -208,31 +248,14 @@ export const handleLike = async (req, res) => {
       videoid: id,
     });
 
-    // UNLIKE
     if (existingLike) {
       await like.findByIdAndDelete(existingLike._id);
-
-      const likeCount = await like.countDocuments({
+    } else {
+      await like.create({
+        viewer: userId,
         videoid: id,
       });
-
-      await video.findByIdAndUpdate(id, {
-        Like: likeCount,
-      });
-
-      return res.status(200).json({
-        success: true,
-        liked: false,
-        likes: likeCount,
-        message: "Video unliked",
-      });
     }
-
-    // LIKE
-    await like.create({
-      viewer: userId,
-      videoid: id,
-    });
 
     const likeCount = await like.countDocuments({
       videoid: id,
@@ -244,16 +267,16 @@ export const handleLike = async (req, res) => {
 
     return res.status(200).json({
       success: true,
-      liked: true,
+      liked: !existingLike,
       likes: likeCount,
-      message: "Video liked",
+      message: existingLike ? "Video unliked" : "Video liked",
     });
   } catch (error) {
     console.error("Like error:", error);
 
     return res.status(500).json({
       success: false,
-      message: "Unable to update like",
+      message: "Unable to update like.",
     });
   }
 };
@@ -271,18 +294,19 @@ export const checkLike = async (req, res) => {
     ) {
       return res.status(400).json({
         success: false,
-        message: "Invalid ID",
+        message: "Invalid video ID or user ID.",
       });
     }
 
-    const existingLike = await like.findOne({
-      viewer: userId,
-      videoid: videoId,
-    });
-
-    const likeCount = await like.countDocuments({
-      videoid: videoId,
-    });
+    const [existingLike, likeCount] = await Promise.all([
+      like.findOne({
+        viewer: userId,
+        videoid: videoId,
+      }),
+      like.countDocuments({
+        videoid: videoId,
+      }),
+    ]);
 
     return res.status(200).json({
       success: true,
@@ -294,7 +318,7 @@ export const checkLike = async (req, res) => {
 
     return res.status(500).json({
       success: false,
-      message: "Unable to check like",
+      message: "Unable to check like.",
     });
   }
 };
@@ -306,23 +330,27 @@ export const getCreatorAnalytics = async (req, res) => {
   try {
     const { userId } = req.params;
 
-    if (!userId) {
-      return res.status(400).json({
-        success: false,
-        message: "User ID is required",
-      });
-    }
-
     if (!mongoose.Types.ObjectId.isValid(userId)) {
       return res.status(400).json({
         success: false,
-        message: "Invalid user ID",
+        message: "Valid user ID is required.",
       });
     }
 
     const videos = await video.find({
       uploader: userId,
     });
+
+    const creator = await users
+      .findById(userId)
+      .select("name channelname subscribers");
+
+    if (!creator) {
+      return res.status(404).json({
+        success: false,
+        message: "Creator not found.",
+      });
+    }
 
     const totalVideos = videos.length;
 
@@ -338,19 +366,7 @@ export const getCreatorAnalytics = async (req, res) => {
       0
     );
 
-    const creator = await users
-      .findById(userId)
-      .select("name channelname subscribers");
-
-    if (!creator) {
-      return res.status(404).json({
-        success: false,
-        message: "Creator not found",
-      });
-    }
-
-    const totalSubscribers =
-      creator.subscribers?.length || 0;
+    const totalSubscribers = creator.subscribers?.length || 0;
 
     const videoPerformance = videos
       .map((currentVideo) => ({
@@ -361,35 +377,30 @@ export const getCreatorAnalytics = async (req, res) => {
         category: currentVideo.category,
         createdAt: currentVideo.createdAt,
         filepath: currentVideo.filepath,
+        videoUrl: createVideoUrl(currentVideo.filepath),
       }))
       .sort((a, b) => b.views - a.views);
 
     return res.status(200).json({
       success: true,
-
       creator: {
         name: creator.name,
         channelname: creator.channelname,
       },
-
       analytics: {
         totalVideos,
         totalViews,
         totalLikes,
         totalSubscribers,
       },
-
       videoPerformance,
     });
   } catch (error) {
-    console.error(
-      "Creator Analytics Error:",
-      error
-    );
+    console.error("Creator Analytics Error:", error);
 
     return res.status(500).json({
       success: false,
-      message: "Unable to fetch creator analytics",
+      message: "Unable to fetch creator analytics.",
     });
   }
 };
@@ -401,42 +412,35 @@ export const getChannelVideos = async (req, res) => {
   try {
     const { userId } = req.params;
 
-    if (!userId) {
-      return res.status(400).json({
-        success: false,
-        message: "Channel ID is required",
-      });
-    }
-
     if (!mongoose.Types.ObjectId.isValid(userId)) {
       return res.status(400).json({
         success: false,
-        message: "Invalid channel ID",
+        message: "Valid channel ID is required.",
       });
     }
 
     const channel = await users
       .findById(userId)
-      .select(
-        "name channelname image description subscribers"
-      );
+      .select("name channelname image description subscribers");
 
     if (!channel) {
       return res.status(404).json({
         success: false,
-        message: "Channel not found",
+        message: "Channel not found.",
       });
     }
 
     const videos = await video
-      .find({
-        uploader: userId,
-      })
+      .find({ uploader: userId })
       .sort({ createdAt: -1 });
+
+    const updatedVideos = videos.map((item) => ({
+      ...item.toObject(),
+      videoUrl: createVideoUrl(item.filepath),
+    }));
 
     return res.status(200).json({
       success: true,
-
       channel: {
         _id: channel._id,
         name: channel.name,
@@ -445,18 +449,14 @@ export const getChannelVideos = async (req, res) => {
         description: channel.description,
         subscribers: channel.subscribers || [],
       },
-
-      videos,
+      videos: updatedVideos,
     });
   } catch (error) {
-    console.error(
-      "Get Channel Videos Error:",
-      error
-    );
+    console.error("Get Channel Videos Error:", error);
 
     return res.status(500).json({
       success: false,
-      message: "Unable to fetch channel videos",
+      message: "Unable to fetch channel videos.",
     });
   }
 };
