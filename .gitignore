@@ -15,7 +15,7 @@ build/
 server/firebase-service-account.json
 
 # Uploaded videos
-server/uploads/
+# Keep existing video files tracked by Git
 
 # Vercel
 .vercel/
